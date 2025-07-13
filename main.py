@@ -82,6 +82,14 @@ def determine_stage(date):
     else:
         return "pre-silking", 0.7
 
+def send_to_google_sheets(entry):
+    webhook_url = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
+    try:
+        requests.post(webhook_url, json=entry)
+    except Exception as e:
+        print(f"❌ Erreur envoi Google Sheets : {e}")
+
+
 def check_ndvi_drop():
     today = datetime.utcnow().date()
     doy = today.timetuple().tm_yday
@@ -118,13 +126,29 @@ def check_ndvi_drop():
         total_weight += weight
 
         if ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1):
-            msg = f"🚨 Alerte NDVI - {name} 🚨\n"
-            msg += f"{tier}\n"
-            msg += f"Stade : {stage} | Seuil : {threshold}\n"
-            msg += f"NDVI actuel : {ndvi_today}\n"
-            msg += f"Δ sur 7j : {delta_7d:.2f}\nZ-score : {z:.2f}\nPercentile : {percentile}%"
-            send_telegram_alert(msg)
+            msg = f"🚨 Alerte NDVI détectée à {name} 🚨
+"
+msg += f"{tier} | Stade : {stage} (seuil critique : {threshold})
+"
+msg += f"📉 NDVI actuel : {ndvi_today} ➝ {'SOUS seuil' if ndvi_today < threshold else 'OK'}
+"
+msg += f"↘️ Variation sur 7 jours : {delta_7d:.2f} ➝ {'Chute rapide' if delta_7d < -0.1 else 'Variation normale'}
+"
+msg += f"📊 Z-score : {z:.2f} ➝ {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Rien à signaler'}
+"
+msg += f"📈 Percentile : {percentile}% (vs. climatologie)"
+send_telegram_alert(msg)
             print(msg)
+            send_to_google_sheets({
+                "county": name,
+                "ndvi": ndvi_today,
+                "delta_7d": round(delta_7d, 2),
+                "z": round(z, 2),
+                "percentile": percentile,
+                "stage": stage,
+                "threshold": threshold,
+                "tier": tier
+            })
 
     stress_index = weighted_index / total_weight if total_weight else 0
     send_telegram_alert(f"🌽 Corn-Belt Stress Index : {stress_index:.2f}")

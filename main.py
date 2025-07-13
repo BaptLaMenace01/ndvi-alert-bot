@@ -83,6 +83,11 @@ def determine_stage(date):
         return "pre-silking", 0.7
 
 def check_ndvi_drop():
+    today = datetime.utcnow().date()
+    doy = today.timetuple().tm_yday
+    if doy < 120 or doy > 260:
+        print(f"⏸️ Période hors pousse (DOY {doy}). Aucune analyse NDVI lancée.")
+        return
     token = get_access_token()
     today = datetime.utcnow().date()
     yesterday = today - timedelta(days=1)

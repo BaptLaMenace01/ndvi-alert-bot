@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import datetime
-from flask import Flask, send_file
 from utils import (
     load_ndvi_history,
     compute_anomaly,
@@ -13,8 +12,6 @@ from utils import (
 )
 from telegram import send_telegram_message
 from config import config
-
-app = Flask(__name__)
 
 def daily_check():
     today = datetime.datetime.today().strftime("%Y-%m-%d")
@@ -41,19 +38,5 @@ def daily_check():
         else:
             print(f"❌ NDVI non disponible pour {zone_name} le {today}")
 
-@app.route("/")
-def run_daily():
-    daily_check()
-    return "✅ Exécution terminée"
-
-@app.route("/test")
-def test_telegram():
-    send_telegram_message("✅ Test alerte NDVI envoyé.")
-    return "Message test envoyé."
-
-@app.route("/export")
-def export_csv():
-    return send_file("ndvi_history.csv", as_attachment=True)
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    daily_check()

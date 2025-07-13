@@ -125,4 +125,4 @@ def test_alert():
 if __name__ == "__main__":
     check_ndvi_drop()
     app.run(host="0.0.0.0", port=10000)
-🔁 Mise à jour main.py avec version Flask + NDVI + alerte Telegram
+

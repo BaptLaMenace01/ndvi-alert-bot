@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-NDVI Monitoring & Alert System – Version 2.1 (July 2025)
+NDVI Monitoring & Alert System – Version 3.0 (July 2025)
 ========================================================
-Improved KPIs + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
+Live Sentinel NDVI Data + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
 """
 import os
 import requests
@@ -12,9 +12,9 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-# 🔐 Environment Variables
-CLIENT_ID = os.environ.get("SENTINELHUB_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("SENTINELHUB_CLIENT_SECRET")
+# 🔐 Credentials directly in script for test (remove before production)
+CLIENT_ID = "7e702207-0faa-4055-a458-9ef9cbdd0918"
+CLIENT_SECRET = "Ke2tTScipfu4o7blxwtqDS3AGFY4nqCv"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_SHEET = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
@@ -52,11 +52,62 @@ for c in counties:
         c["tier"] = "🔴 Petit producteur"
 
 def get_access_token():
-    return "fake-token"
+    response = requests.post(
+        "https://services.sentinel-hub.com/oauth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET
+        }
+    )
+    return response.json().get("access_token")
 
-def simulate_ndvi(lat, lon, date):
-    np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
-    return round(np.random.uniform(0.2, 0.85), 2)
+def get_ndvi_from_api(lat, lon, date, token):
+    payload = {
+        "input": {
+            "bounds": {
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [lon, lat]
+                }
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "timeRange": {
+                        "from": f"{date}T00:00:00Z",
+                        "to": f"{date}T23:59:59Z"
+                    }
+                }
+            }]
+        },
+        "output": {
+            "responses": [{
+                "identifier": "default",
+                "format": {"type": "application/json"}
+            }]
+        },
+        "evalscript": """
+        //VERSION=3
+        function setup() {
+            return {
+                input: ["B04", "B08"],
+                output: { id: "default", bands: 1 }
+            };
+        }
+        function evaluatePixel(sample) {
+            let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+            return [ndvi];
+        }
+        """
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.post("https://services.sentinel-hub.com/api/v1/process", json=payload, headers=headers)
+    try:
+        ndvi_val = r.json()[0][0]
+        return round(ndvi_val, 2)
+    except:
+        return None
 
 def send_telegram_alert(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -84,6 +135,7 @@ def check_ndvi_drop():
         print(f"⏸️ Période hors pousse (DOY {doy}). Aucune analyse NDVI lancée.")
         return
 
+    token = get_access_token()
     yesterday = today - timedelta(days=1)
     seven_days_ago = today - timedelta(days=7)
     weighted_index = 0
@@ -96,9 +148,12 @@ def check_ndvi_drop():
         weight = county["weight"]
         tier = county["tier"]
 
-        ndvi_today = simulate_ndvi(lat, lon, today.isoformat())
-        ndvi_yest = simulate_ndvi(lat, lon, yesterday.isoformat())
-        ndvi_week = simulate_ndvi(lat, lon, seven_days_ago.isoformat())
+        ndvi_today = get_ndvi_from_api(lat, lon, today.isoformat(), token)
+        ndvi_yest = get_ndvi_from_api(lat, lon, yesterday.isoformat(), token)
+        ndvi_week = get_ndvi_from_api(lat, lon, seven_days_ago.isoformat(), token)
+
+        if None in (ndvi_today, ndvi_yest, ndvi_week):
+            continue
 
         delta_7d = ndvi_today - ndvi_week
         stage, threshold = determine_stage(today)
@@ -134,7 +189,6 @@ def check_ndvi_drop():
     stress_index = weighted_index / total_weight if total_weight else 0
     send_telegram_alert(f"🌽 Corn-Belt Stress Index : {stress_index:.2f}")
 
-    # Résumé investissement
     if stress_index < -0.5 and alert_count >= 3:
         send_telegram_alert("📈 Analyse : Plusieurs zones critiques détectées avec un stress généralisé.\n👉 CONSEIL : Envisager un achat (long) sur l'ETF CORN.")
     elif stress_index < -0.3:
@@ -144,11 +198,11 @@ def check_ndvi_drop():
 
 @app.route("/")
 def home():
-    return "✅ NDVI Alert Bot is running (v2.1)"
+    return "✅ NDVI Alert Bot is running (v3.0)"
 
 @app.route("/test")
 def test_alert():
-    send_telegram_alert("✅ TEST : Ceci est une alerte Telegram NDVI (v2.1).")
+    send_telegram_alert("✅ TEST : Ceci est une alerte Telegram NDVI (v3.0).")
     return jsonify({"message": "Alerte test envoyée avec succès"})
 
 if __name__ == "__main__":

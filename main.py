@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-NDVI Monitoring & Alert System – Version 3.0 (July 2025)
+NDVI Monitoring & Alert System – Version 3.2 (July 2025)
 ========================================================
 Live Sentinel NDVI Data + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
++ Manual Trigger via /force URL + Exportable CSV history
 """
 import os
 import requests
 import numpy as np
+import csv
 from datetime import datetime, timedelta
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file
 import matplotlib.pyplot as plt
 
 app = Flask(__name__)
@@ -19,6 +21,8 @@ CLIENT_SECRET = os.environ.get("SENTINELHUB_CLIENT_SECRET")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 WEBHOOK_SHEET = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
+
+HISTORY_FILE = "ndvi_history.csv"
 
 # 📍 Top 20 corn-producing counties with weights
 counties = [
@@ -51,8 +55,6 @@ for c in counties:
         c["tier"] = "🟡 Producteur moyen"
     else:
         c["tier"] = "🔴 Petit producteur"
-
-# Production-ready NDVI acquisition
 
 def get_access_token():
     response = requests.post(
@@ -112,6 +114,15 @@ def send_to_google_sheets(entry):
     except Exception as e:
         print(f"❌ Erreur Google Sheets : {e}")
 
+def write_to_csv(entry):
+    headers = ["Date", "Comté", "NDVI", "Δ 7 jours", "Z-score", "Percentile", "Stade", "Seuil", "Producteur"]
+    file_exists = os.path.isfile(HISTORY_FILE)
+    with open(HISTORY_FILE, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(headers)
+        writer.writerow(entry)
+
 def determine_stage(date):
     doy = date.timetuple().tm_yday
     if doy < 130:
@@ -162,6 +173,9 @@ def check_ndvi_drop():
             send_telegram_alert(msg)
             investment_signals.append(z)
 
+        entry = [today.isoformat(), c["name"], ndvi_today, round(delta_7d, 2), round(z, 2), percentile, stage, threshold, c["tier"]]
+        write_to_csv(entry)
+
         send_to_google_sheets({
             "county": c["name"],
             "ndvi": ndvi_today,
@@ -181,12 +195,21 @@ def check_ndvi_drop():
 
 @app.route("/")
 def home():
-    return "✅ NDVI Alert Bot (v3.0)"
+    return "✅ NDVI Alert Bot (v3.2)"
 
 @app.route("/test")
 def test():
     send_telegram_alert("✅ TEST – NDVI Bot opérationnel ✅")
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "message": "Message Telegram de test envoyé avec succès."})
+
+@app.route("/force")
+def force():
+    check_ndvi_drop()
+    return jsonify({"status": "ok", "message": "Analyse NDVI forcée lancée avec succès."})
+
+@app.route("/export")
+def export():
+    return send_file(HISTORY_FILE, as_attachment=True)
 
 if __name__ == "__main__":
     check_ndvi_drop()

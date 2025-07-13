@@ -70,7 +70,51 @@ def get_access_token():
 def get_ndvi(lat, lon, date, token):
     url = "https://services.sentinel-hub.com/api/v1/process"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = { ... }  # conservé inchangé pour lisibilité
+    payload = {
+        "input": {
+            "bounds": {
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [lon, lat]
+                },
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"}
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "timeRange": {
+                        "from": f"{date}T00:00:00Z",
+                        "to": f"{date}T23:59:59Z"
+                    },
+                    "maxCloudCoverage": 30
+                }
+            }]
+        },
+        "output": {
+            "width": 10,
+            "height": 10,
+            "responses": [{
+                "identifier": "default",
+                "format": {"type": "image/tiff"}
+            }]
+        },
+        "evalscript": """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B04", "B08"],
+            output: {
+              bands: 1,
+              sampleType: "FLOAT32"
+            }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndvi = index(sample.B08, sample.B04);
+          return [ndvi];
+        }
+        """
+    }
     response = requests.post(url, headers=headers, json=payload)
     if response.ok:
         import random
@@ -79,7 +123,11 @@ def get_ndvi(lat, lon, date, token):
 
 def send_telegram_alert(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+    try:
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+        print("Telegram status:", r.status_code, r.text)
+    except Exception as e:
+        print("❌ Telegram error:", e)
 
 def send_to_google_sheets(entry):
     try:

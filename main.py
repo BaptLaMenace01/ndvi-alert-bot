@@ -40,3 +40,15 @@ def daily_check():
 
 if __name__ == "__main__":
     daily_check()
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/test')
+def test():
+    from telegram_alert import send_telegram_message
+    send_telegram_message("✅ Test réussi depuis Render 🔔")
+    return "✅ Message Telegram envoyé !"
+
+if __name__ == '__main__':
+    app.run()

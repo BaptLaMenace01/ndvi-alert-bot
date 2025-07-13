@@ -2,13 +2,12 @@
 """
 NDVI Monitoring & Alert System – Version 2.0 (July 2025)
 ========================================================
-Improved KPIs + Flask route for /test + 20 top corn counties
+Improved KPIs + Telegram Alerts + Google Sheets Logging + 20 Top Corn Counties
 """
 import os
 import requests
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from flask import Flask, jsonify
 
@@ -19,8 +18,9 @@ CLIENT_ID = os.environ.get("SENTINELHUB_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("SENTINELHUB_CLIENT_SECRET")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+WEBHOOK_SHEET = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
 
-# 📍 Top 20 corn-producing counties with weights (estimates)
+# 📍 Top 20 corn-producing counties with weights
 counties = [
     {"name": "McLean, IL", "lat": 40.48, "lon": -88.99, "weight": 0.062},
     {"name": "Iroquois, IL", "lat": 40.74, "lon": -87.83, "weight": 0.051},
@@ -44,34 +44,31 @@ counties = [
     {"name": "Benton, IA", "lat": 42.11, "lon": -91.86, "weight": 0.028},
 ]
 
-# ➕ Production tier by weight (to label big/medium/small producers)
-for county in counties:
-    if county["weight"] >= 0.05:
-        county["tier"] = "🟢 Gros producteur"
-    elif county["weight"] >= 0.035:
-        county["tier"] = "🟡 Producteur moyen"
+# ➕ Tier by weight
+for c in counties:
+    if c["weight"] >= 0.05:
+        c["tier"] = "🟢 Gros producteur"
+    elif c["weight"] >= 0.035:
+        c["tier"] = "🟡 Producteur moyen"
     else:
-        county["tier"] = "🔴 Petit producteur"
+        c["tier"] = "🔴 Petit producteur"
 
 def get_access_token():
-    response = requests.post(
-        "https://services.sentinel-hub.com/oauth/token",
-        data={
-            "grant_type": "client_credentials",
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET
-        }
-    )
-    return response.json().get("access_token")
+    return "fake-token"
 
 def simulate_ndvi(lat, lon, date):
     np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
     return round(np.random.uniform(0.2, 0.85), 2)
 
-def send_telegram_alert(message):
+def send_telegram_alert(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    requests.post(url, json=payload)
+    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+
+def send_to_google_sheets(entry):
+    try:
+        requests.post(WEBHOOK_SHEET, json=entry)
+    except:
+        print("❌ Erreur webhook Google Sheets")
 
 def determine_stage(date):
     doy = date.timetuple().tm_yday
@@ -82,25 +79,15 @@ def determine_stage(date):
     else:
         return "pre-silking", 0.7
 
-def send_to_google_sheets(entry):
-    webhook_url = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
-    try:
-        requests.post(webhook_url, json=entry)
-    except Exception as e:
-        print(f"❌ Erreur envoi Google Sheets : {e}")
-
-
 def check_ndvi_drop():
     today = datetime.utcnow().date()
     doy = today.timetuple().tm_yday
     if doy < 120 or doy > 260:
         print(f"⏸️ Période hors pousse (DOY {doy}). Aucune analyse NDVI lancée.")
         return
-    token = get_access_token()
-    today = datetime.utcnow().date()
+
     yesterday = today - timedelta(days=1)
     seven_days_ago = today - timedelta(days=7)
-
     weighted_index = 0
     total_weight = 0
 
@@ -118,37 +105,33 @@ def check_ndvi_drop():
         delta_7d = ndvi_today - ndvi_week
 
         stage, threshold = determine_stage(today)
-
         z = (ndvi_today - 0.6) / 0.15
         percentile = int(np.clip(100 * (1 + z) / 2, 0, 100))
 
         weighted_index += z * weight
         total_weight += weight
 
-        if ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1):
-            msg = f"🚨 Alerte NDVI détectée à {name} 🚨
-"
-msg += f"{tier} | Stade : {stage} (seuil critique : {threshold})
-"
-msg += f"📉 NDVI actuel : {ndvi_today} ➝ {'SOUS seuil' if ndvi_today < threshold else 'OK'}
-"
-msg += f"↘️ Variation sur 7 jours : {delta_7d:.2f} ➝ {'Chute rapide' if delta_7d < -0.1 else 'Variation normale'}
-"
-msg += f"📊 Z-score : {z:.2f} ➝ {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Rien à signaler'}
-"
-msg += f"📈 Percentile : {percentile}% (vs. climatologie)"
-send_telegram_alert(msg)
+        alert = ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1)
+        if alert:
+            msg = f"🚨 Alerte NDVI détectée à {name} 🚨\n"
+            msg += f"{tier} | Stade : {stage} (seuil critique : {threshold})\n"
+            msg += f"📉 NDVI actuel : {ndvi_today} ➝ {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
+            msg += f"↘️ Variation sur 7 jours : {delta_7d:.2f} ➝ {'Chute rapide' if delta_7d < -0.1 else 'Variation normale'}\n"
+            msg += f"📊 Z-score : {z:.2f} ➝ {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Rien à signaler'}\n"
+            msg += f"📈 Percentile : {percentile}% (vs. climatologie)"
+            send_telegram_alert(msg)
             print(msg)
-            send_to_google_sheets({
-                "county": name,
-                "ndvi": ndvi_today,
-                "delta_7d": round(delta_7d, 2),
-                "z": round(z, 2),
-                "percentile": percentile,
-                "stage": stage,
-                "threshold": threshold,
-                "tier": tier
-            })
+
+        send_to_google_sheets({
+            "county": name,
+            "ndvi": ndvi_today,
+            "delta_7d": round(delta_7d, 2),
+            "z": round(z, 2),
+            "percentile": percentile,
+            "stage": stage,
+            "threshold": threshold,
+            "tier": tier
+        })
 
     stress_index = weighted_index / total_weight if total_weight else 0
     send_telegram_alert(f"🌽 Corn-Belt Stress Index : {stress_index:.2f}")

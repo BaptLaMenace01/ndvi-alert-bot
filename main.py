@@ -3,14 +3,14 @@
 NDVI Monitoring & Alert System – Version 3.2 (July 2025)
 ========================================================
 Live Sentinel NDVI Data + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
-+ Manual Trigger via /force URL + Exportable CSV history
++ Manual Trigger via /force URL (+ debug test alerts) + Exportable CSV history
 """
 import os
 import requests
 import numpy as np
 import csv
 from datetime import datetime, timedelta
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, request
 import matplotlib.pyplot as plt
 
 app = Flask(__name__)
@@ -132,7 +132,7 @@ def determine_stage(date):
     else:
         return "pre-silking", 0.7
 
-def check_ndvi_drop():
+def check_ndvi_drop(force_alert=False):
     today = datetime.utcnow().date()
     doy = today.timetuple().tm_yday
     if doy < 120 or doy > 260:
@@ -163,8 +163,8 @@ def check_ndvi_drop():
         total_weight += c["weight"]
 
         alert = ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1)
-        if alert:
-            msg = f"🚨 Alerte NDVI à {c['name']} 🚨\n"
+        if alert or force_alert:
+            msg = f"{'⚠️ FAKE ALERT TEST' if force_alert else '🚨 Alerte NDVI à ' + c['name']} 🚨\n"
             msg += f"{c['tier']} | Stade : {stage} (seuil : {threshold})\n"
             msg += f"📉 NDVI actuel : {ndvi_today} → {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
             msg += f"↘️ Variation sur 7j : {delta_7d:.2f} → {'Chute rapide' if delta_7d < -0.1 else 'Normale'}\n"
@@ -204,8 +204,9 @@ def test():
 
 @app.route("/force")
 def force():
-    check_ndvi_drop()
-    return jsonify({"status": "ok", "message": "Analyse NDVI forcée lancée avec succès."})
+    debug = request.args.get("debug", "false").lower() == "true"
+    check_ndvi_drop(force_alert=debug)
+    return jsonify({"status": "ok", "message": f"Analyse NDVI {'(debug)' if debug else ''} lancée avec succès."})
 
 @app.route("/export")
 def export():

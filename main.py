@@ -44,5 +44,95 @@ counties = [
     {"name": "Benton, IA", "lat": 42.11, "lon": -91.86, "weight": 0.028},
 ]
 
-# Le reste du script ne change pas
-# ... (inchangé à partir de la fonction get_access_token)
+# ➕ Production tier by weight (to label big/medium/small producers)
+for county in counties:
+    if county["weight"] >= 0.05:
+        county["tier"] = "🟢 Gros producteur"
+    elif county["weight"] >= 0.035:
+        county["tier"] = "🟡 Producteur moyen"
+    else:
+        county["tier"] = "🔴 Petit producteur"
+
+def get_access_token():
+    response = requests.post(
+        "https://services.sentinel-hub.com/oauth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET
+        }
+    )
+    return response.json().get("access_token")
+
+def simulate_ndvi(lat, lon, date):
+    np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
+    return round(np.random.uniform(0.2, 0.85), 2)
+
+def send_telegram_alert(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    requests.post(url, json=payload)
+
+def determine_stage(date):
+    doy = date.timetuple().tm_yday
+    if doy < 130:
+        return "emergence", 0.3
+    elif doy < 160:
+        return "V8-V12", 0.55
+    else:
+        return "pre-silking", 0.7
+
+def check_ndvi_drop():
+    token = get_access_token()
+    today = datetime.utcnow().date()
+    yesterday = today - timedelta(days=1)
+    seven_days_ago = today - timedelta(days=7)
+
+    weighted_index = 0
+    total_weight = 0
+
+    for county in counties:
+        name = county["name"]
+        lat, lon = county["lat"], county["lon"]
+        weight = county["weight"]
+        tier = county["tier"]
+
+        ndvi_today = simulate_ndvi(lat, lon, today.isoformat())
+        ndvi_yest = simulate_ndvi(lat, lon, yesterday.isoformat())
+        ndvi_week = simulate_ndvi(lat, lon, seven_days_ago.isoformat())
+
+        delta_1d = ndvi_today - ndvi_yest
+        delta_7d = ndvi_today - ndvi_week
+
+        stage, threshold = determine_stage(today)
+
+        z = (ndvi_today - 0.6) / 0.15
+        percentile = int(np.clip(100 * (1 + z) / 2, 0, 100))
+
+        weighted_index += z * weight
+        total_weight += weight
+
+        if ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1):
+            msg = f"🚨 Alerte NDVI - {name} 🚨\n"
+            msg += f"{tier}\n"
+            msg += f"Stade : {stage} | Seuil : {threshold}\n"
+            msg += f"NDVI actuel : {ndvi_today}\n"
+            msg += f"Δ sur 7j : {delta_7d:.2f}\nZ-score : {z:.2f}\nPercentile : {percentile}%"
+            send_telegram_alert(msg)
+            print(msg)
+
+    stress_index = weighted_index / total_weight if total_weight else 0
+    send_telegram_alert(f"🌽 Corn-Belt Stress Index : {stress_index:.2f}")
+
+@app.route("/")
+def home():
+    return "✅ NDVI Alert Bot is running (v2.0)"
+
+@app.route("/test")
+def test_alert():
+    send_telegram_alert("✅ TEST : Ceci est une alerte Telegram NDVI (v2.0).")
+    return jsonify({"message": "Alerte test envoyée avec succès"})
+
+if __name__ == "__main__":
+    check_ndvi_drop()
+    app.run(host="0.0.0.0", port=10000)

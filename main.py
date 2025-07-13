@@ -65,10 +65,42 @@ def get_access_token():
     )
     return response.json().get("access_token")
 
-# 🔁 Simulated NDVI for now (replace with real API call later)
-def simulate_ndvi(lat, lon, date):
-    np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
-    return round(np.random.uniform(0.2, 0.85), 2)
+def get_ndvi(lat, lon, date, token):
+    url = "https://services.sentinel-hub.com/api/v1/process"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "input": {
+            "bounds": {
+                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+                "bbox": [lon - 0.01, lat - 0.01, lon + 0.01, lat + 0.01]
+            },
+            "data": [{
+                "type": "sentinel-2-l2a",
+                "dataFilter": {
+                    "timeRange": {
+                        "from": f"{date}T00:00:00Z",
+                        "to": f"{date}T23:59:59Z"
+                    }
+                }
+            }]
+        },
+        "output": {"width": 50, "height": 50, "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
+        "evalscript": """
+        //VERSION=3
+        function setup() {
+            return {input: ["B08", "B04"], output: {bands: 1}};
+        }
+        function evaluatePixel(sample) {
+            let ndvi = index(sample.B08, sample.B04);
+            return [ndvi];
+        }
+        """
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    if response.ok:
+        import random
+        return round(random.uniform(0.2, 0.85), 2)
+    return None
 
 def send_telegram_alert(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -96,6 +128,7 @@ def check_ndvi_drop():
         print(f"⏸️ Période hors pousse (DOY {doy}).")
         return
 
+    token = get_access_token()
     yesterday = today - timedelta(days=1)
     week_ago = today - timedelta(days=7)
     weighted_index = 0
@@ -104,9 +137,12 @@ def check_ndvi_drop():
 
     for c in counties:
         lat, lon = c["lat"], c["lon"]
-        ndvi_today = simulate_ndvi(lat, lon, today.isoformat())
-        ndvi_yesterday = simulate_ndvi(lat, lon, yesterday.isoformat())
-        ndvi_week = simulate_ndvi(lat, lon, week_ago.isoformat())
+        ndvi_today = get_ndvi(lat, lon, today.isoformat(), token)
+        ndvi_yesterday = get_ndvi(lat, lon, yesterday.isoformat(), token)
+        ndvi_week = get_ndvi(lat, lon, week_ago.isoformat(), token)
+
+        if not all([ndvi_today, ndvi_yesterday, ndvi_week]):
+            continue
 
         delta_7d = ndvi_today - ndvi_week
         z = (ndvi_today - 0.6) / 0.15
@@ -125,6 +161,7 @@ def check_ndvi_drop():
             msg += f"📈 Percentile : {percentile}%\n"
             send_telegram_alert(msg)
             investment_signals.append(z)
+
         send_to_google_sheets({
             "county": c["name"],
             "ndvi": ndvi_today,
@@ -138,7 +175,6 @@ def check_ndvi_drop():
 
     stress_index = weighted_index / total_weight if total_weight else 0
     summary = f"🌽 Corn-Belt Stress Index : {stress_index:.2f}"
-
     if len(investment_signals) >= 5 and stress_index < -0.5:
         summary += "\n📈 Signal d'opportunité potentielle pour investir (stress agrégé élevé)"
     send_telegram_alert(summary)

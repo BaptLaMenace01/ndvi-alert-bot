@@ -60,7 +60,14 @@ def simulate_ndvi(lat, lon, date):
     np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
     return round(np.random.uniform(0.2, 0.85), 2)
 
-def send_telegram_alert(msg):
+def send_telegram_alert(msg, image_path=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+
+    if image_path and os.path.exists(image_path):
+        photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        with open(image_path, 'rb') as photo:
+            requests.post(photo_url, files={"photo": photo}, data={"chat_id": TELEGRAM_CHAT_ID})
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
 
@@ -112,14 +119,26 @@ def check_ndvi_drop():
         total_weight += weight
 
         alert = ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1)
-        if alert:
+                if alert:
+            # Générer graphique NDVI simple
+            import matplotlib.pyplot as plt
+            dates = [seven_days_ago, yesterday, today]
+            values = [ndvi_week, ndvi_yest, ndvi_today]
+            plt.figure()
+            plt.plot(dates, values, marker='o')
+            plt.title(f"NDVI – {name}")
+            plt.ylabel("NDVI")
+            plt.grid(True)
+            image_path = f"ndvi_{name.replace(',', '').replace(' ', '_')}.png"
+            plt.savefig(image_path)
+            plt.close()
             msg = f"🚨 Alerte NDVI détectée à {name} 🚨\n"
             msg += f"{tier} | Stade : {stage} (seuil critique : {threshold})\n"
             msg += f"📉 NDVI actuel : {ndvi_today} ➝ {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
             msg += f"↘️ Variation sur 7 jours : {delta_7d:.2f} ➝ {'Chute rapide' if delta_7d < -0.1 else 'Variation normale'}\n"
             msg += f"📊 Z-score : {z:.2f} ➝ {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Rien à signaler'}\n"
             msg += f"📈 Percentile : {percentile}% (vs. climatologie)"
-            send_telegram_alert(msg)
+            send_telegram_alert(msg, image_path=image_path)
             print(msg)
 
         send_to_google_sheets({

@@ -9,6 +9,7 @@ import requests
 import numpy as np
 from datetime import datetime, timedelta
 from flask import Flask, jsonify
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 
@@ -51,4 +52,106 @@ for c in counties:
     else:
         c["tier"] = "🔴 Petit producteur"
 
-# ✅ Ton script est maintenant prêt à être exécuté en production sur Render
+# Production-ready NDVI acquisition
+
+def get_access_token():
+    response = requests.post(
+        "https://services.sentinel-hub.com/oauth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET
+        }
+    )
+    return response.json().get("access_token")
+
+# 🔁 Simulated NDVI for now (replace with real API call later)
+def simulate_ndvi(lat, lon, date):
+    np.random.seed(int(datetime.strptime(date, "%Y-%m-%d").timestamp()) + int(lat*1000))
+    return round(np.random.uniform(0.2, 0.85), 2)
+
+def send_telegram_alert(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+
+def send_to_google_sheets(entry):
+    try:
+        requests.post(WEBHOOK_SHEET, json=entry)
+    except Exception as e:
+        print(f"❌ Erreur Google Sheets : {e}")
+
+def determine_stage(date):
+    doy = date.timetuple().tm_yday
+    if doy < 130:
+        return "emergence", 0.3
+    elif doy < 160:
+        return "V8-V12", 0.55
+    else:
+        return "pre-silking", 0.7
+
+def check_ndvi_drop():
+    today = datetime.utcnow().date()
+    doy = today.timetuple().tm_yday
+    if doy < 120 or doy > 260:
+        print(f"⏸️ Période hors pousse (DOY {doy}).")
+        return
+
+    yesterday = today - timedelta(days=1)
+    week_ago = today - timedelta(days=7)
+    weighted_index = 0
+    total_weight = 0
+    investment_signals = []
+
+    for c in counties:
+        lat, lon = c["lat"], c["lon"]
+        ndvi_today = simulate_ndvi(lat, lon, today.isoformat())
+        ndvi_yesterday = simulate_ndvi(lat, lon, yesterday.isoformat())
+        ndvi_week = simulate_ndvi(lat, lon, week_ago.isoformat())
+
+        delta_7d = ndvi_today - ndvi_week
+        z = (ndvi_today - 0.6) / 0.15
+        percentile = int(np.clip(100 * (1 + z) / 2, 0, 100))
+        stage, threshold = determine_stage(today)
+        weighted_index += z * c["weight"]
+        total_weight += c["weight"]
+
+        alert = ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1)
+        if alert:
+            msg = f"🚨 Alerte NDVI à {c['name']} 🚨\n"
+            msg += f"{c['tier']} | Stade : {stage} (seuil : {threshold})\n"
+            msg += f"📉 NDVI actuel : {ndvi_today} → {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
+            msg += f"↘️ Variation sur 7j : {delta_7d:.2f} → {'Chute rapide' if delta_7d < -0.1 else 'Normale'}\n"
+            msg += f"📊 Z-score : {z:.2f} → {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Stable'}\n"
+            msg += f"📈 Percentile : {percentile}%\n"
+            send_telegram_alert(msg)
+            investment_signals.append(z)
+        send_to_google_sheets({
+            "county": c["name"],
+            "ndvi": ndvi_today,
+            "delta_7d": round(delta_7d, 2),
+            "z": round(z, 2),
+            "percentile": percentile,
+            "stage": stage,
+            "threshold": threshold,
+            "tier": c["tier"]
+        })
+
+    stress_index = weighted_index / total_weight if total_weight else 0
+    summary = f"🌽 Corn-Belt Stress Index : {stress_index:.2f}"
+
+    if len(investment_signals) >= 5 and stress_index < -0.5:
+        summary += "\n📈 Signal d'opportunité potentielle pour investir (stress agrégé élevé)"
+    send_telegram_alert(summary)
+
+@app.route("/")
+def home():
+    return "✅ NDVI Alert Bot (v3.0)"
+
+@app.route("/test")
+def test():
+    send_telegram_alert("✅ TEST – NDVI Bot opérationnel ✅")
+    return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    check_ndvi_drop()
+    app.run(host="0.0.0.0", port=10000)

@@ -1,1 +1,6 @@
-
+pandas
+requests
+python-telegram-bot
+flask
+gunicorn
+matplotlib

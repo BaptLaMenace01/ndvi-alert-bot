@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import requests
 import numpy as np
 import matplotlib.pyplot as plt
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, request
 from telegram import send_telegram_message
 
 # 🔐 Identifiants (à définir dans ton env Replit)
@@ -143,7 +143,10 @@ def compute_anomaly(history, current):
 
 
 def send_to_google_sheets(date, zone, area, anomaly):
-    url = "https://script.google.com/macros/s/AKfycbzB5Ecr419veLqx6Oab1emKz1JKKA-Kk9qGu0NsOBMUcZBs6_vBopK9WQWJmFceh0GY/exec"
+    url = os.getenv("GOOGLE_SHEETS_WEBHOOK")
+    if not url:
+        print("❌ GOOGLE_SHEETS_WEBHOOK non défini dans les variables d'environnement")
+        return
     payload = {
         "date": date,
         "zone": zone,
@@ -158,7 +161,7 @@ def send_to_google_sheets(date, zone, area, anomaly):
         print(f"❌ Erreur Google Sheets : {e}")
 
 
-def check_brine_change():
+def check_brine_change(force_alert=False):
     date_iso = datetime.utcnow().date().isoformat()
     token = get_access_token()
     global_signal = 0
@@ -173,7 +176,7 @@ def check_brine_change():
         send_to_google_sheets(date_iso, p["name"], area, anomaly)
 
         # 🚨 Alerte individuelle
-        if anomaly >= THRESHOLD_PCT or anomaly <= THRESHOLD_NEG:
+        if force_alert or anomaly >= THRESHOLD_PCT or anomaly <= THRESHOLD_NEG:
             direction = "⬆️ SUR‑pompage" if anomaly >= THRESHOLD_PCT else "⬇️ CONTRAINTE"
             msg = (
                 f"⚠️ {direction} détecté – {p['name']}\n"
@@ -184,7 +187,7 @@ def check_brine_change():
             global_signal += p["weight"] * (1 if anomaly >= THRESHOLD_PCT else -1)
 
     # 🚩 Alerte globale
-    if abs(global_signal) >= 0.3:
+    if abs(global_signal) >= 0.3 or force_alert:
         trend = "SURproduction (signal short)" if global_signal > 0 else "Stress hydrique (signal long)"
         send_telegram_message(f"🚨 Signal global Lithium : {trend} – Score {global_signal:+.2f}")
 
@@ -198,8 +201,9 @@ def home():
 
 @app.route("/force")
 def force():
-    check_brine_change()
-    return jsonify({"status": "ok", "message": "Analyse forcée exécutée"})
+    debug = (request.args.get("debug", "false").lower() == "true")
+    check_brine_change(force_alert=debug)
+    return jsonify({"status": "ok", "message": "Analyse forcée exécutée", "debug": debug})
 
 @app.route("/export")
 def export_csv():

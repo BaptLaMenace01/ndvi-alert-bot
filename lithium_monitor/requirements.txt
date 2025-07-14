@@ -1,0 +1,5 @@
+requests
+numpy
+flask
+sentinelhub
+matplotlib

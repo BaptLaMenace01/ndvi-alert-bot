@@ -197,4 +197,32 @@ def debug():
             }
             
             response = requests.post(url, json=payload, timeout=10)
-            debug
+            debug_info["api_status"] = response.status_code
+            debug_info["api_response"] = response.text
+            
+            if response.status_code == 200:
+                result = response.json()
+                debug_info["api_success"] = result.get("ok", False)
+                debug_info["api_error"] = result.get("error_code") if not result.get("ok") else None
+            else:
+                debug_info["api_success"] = False
+                debug_info["api_error"] = f"HTTP {response.status_code}"
+                
+        except Exception as e:
+            debug_info["api_error"] = str(e)
+            debug_info["api_success"] = False
+    
+    return jsonify(debug_info)
+
+@app.route("/force")
+def force():
+    debug = request.args.get("debug", "false").lower() == "true"
+    check_ndvi_drop(force_alert=debug)
+    return jsonify({"status": "ok", "message": f"Analyse NDVI {'(debug)' if debug else ''} lancée avec succès."})
+
+@app.route("/export")
+def export():
+    return send_file(HISTORY_FILE, as_attachment=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)

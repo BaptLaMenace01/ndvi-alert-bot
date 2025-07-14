@@ -63,55 +63,9 @@ def get_access_token():
 
 
 def get_brine_area(lat: float, lon: float, date_iso: str, token: str) -> float:
-    """Retourne l'aire (m²) classée comme eau/saumure (>0,1 NDWI).
-    On interroge un carré ~1 km x 1 km centré sur le bassin."""
-    url = "https://services.sentinel-hub.com/api/v1/process"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    bbox = [lon - 0.005, lat - 0.005, lon + 0.005, lat + 0.005]
-    payload = {
-        "input": {
-            "bounds": {
-                "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
-                "bbox": bbox,
-            },
-            "data": [
-                {
-                    "type": "sentinel-2-l2a",
-                    "dataFilter": {
-                        "timeRange": {"from": f"{date_iso}T00:00:00Z", "to": f"{date_iso}T23:59:59Z"},
-                        "maxCloudCoverage": 10,
-                    },
-                }
-            ],
-        },
-        "output": {
-            "width": 100,
-            "height": 100,
-            "responses": [
-                {"identifier": "brine", "format": {"type": "image/tiff"}},
-            ],
-        },
-        "evalscript": """
-        //VERSION=3
-        function setup() {
-            return {input:["B03","B08"], output:{bands:1,sampleType:"UINT8"}};
-        }
-        function evaluatePixel(s) {
-            let ndwi = (s.B03 - s.B08) / (s.B03 + s.B08);
-            return [ndwi > 0.1 ? 1 : 0]; // 1 = eau/saumure
-        }
-        """,
-    }
-
-    r = requests.post(url, headers=headers, json=payload)
-    if not r.ok:
-        return None
-
-    # 📝 La réponse est GeoTIFF – ici, pour démo, on simule une aire (m²)
-    # !! Remplace par analyse raster pour prod.
-    simulated_area = round(1e6 * np.random.uniform(0.8, 1.2), 0)  # 0,8–1,2 km²
-    return simulated_area
+    # Simulation pour test pipeline : retourne une valeur aléatoire entre 0,8 et 1,2 million m²
+    import numpy as np
+    return round(1e6 * np.random.uniform(0.8, 1.2), 0)
 
 # ---------------------------------------------------------------------
 # Alerte & persistence

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NDVI Monitoring & Alert System – Version 3.2 (July 2025)
+NDVI Monitoring & Alert System – Version 3.2 (July 2025)
 ========================================================
 Live Sentinel NDVI Data + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
 + Manual Trigger via /force URL (+ debug test alerts) + Exportable CSV history
@@ -158,18 +158,43 @@ def home():
 
 @app.route("/test")
 def test():
-    send_telegram_message("✅ TEST – NDVI Bot opérationnel ✅")
-    return jsonify({"status": "ok", "message": "Message Telegram de test envoyé avec succès."})
+    # Test avec diagnostic détaillé
+    result = send_telegram_message("✅ TEST – NDVI Bot opérationnel ✅")
+    
+    if result:
+        return jsonify({
+            "status": "ok", 
+            "message": "Message Telegram de test envoyé avec succès.",
+            "telegram_result": True
+        })
+    else:
+        return jsonify({
+            "status": "error", 
+            "message": "Échec de l'envoi du message Telegram.",
+            "telegram_result": False
+        }), 500
 
-@app.route("/force")
-def force():
-    debug = request.args.get("debug", "false").lower() == "true"
-    check_ndvi_drop(force_alert=debug)
-    return jsonify({"status": "ok", "message": f"Analyse NDVI {'(debug)' if debug else ''} lancée avec succès."})
-
-@app.route("/export")
-def export():
-    return send_file(HISTORY_FILE, as_attachment=True)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+@app.route("/debug")
+def debug():
+    """Endpoint de diagnostic détaillé"""
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    
+    debug_info = {
+        "token_present": bool(token),
+        "chat_id_present": bool(chat_id),
+        "chat_id_value": chat_id,
+        "token_preview": f"{token[:10]}...{token[-4:]}" if token else "Non défini"
+    }
+    
+    # Test direct de l'API Telegram
+    if token and chat_id:
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {
+                "chat_id": str(chat_id),
+                "text": f"🔍 Test diagnostic - {datetime.utcnow().strftime('%H:%M:%S')} UTC"
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            debug

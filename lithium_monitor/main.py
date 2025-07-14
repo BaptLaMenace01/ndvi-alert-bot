@@ -172,7 +172,9 @@ def check_brine_change(force_alert=False):
 
     for p in ponds:
         area = get_brine_area(p["lat"], p["lon"], date_iso, token)
+        print("[DEBUG] Zone :", p["name"], "Area retournée :", area)
         if area is None:
+            print("[DEBUG] Area est None, on passe à la suivante.")
             continue
         hist = load_history(p["name"])
         anomaly = compute_anomaly(hist, area)

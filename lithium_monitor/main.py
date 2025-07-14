@@ -144,17 +144,21 @@ def compute_anomaly(history, current):
 
 def send_to_google_sheets(date, zone, area, anomaly):
     url = os.getenv("GOOGLE_SHEETS_WEBHOOK")
-    if not url:
-        print("❌ GOOGLE_SHEETS_WEBHOOK non défini dans les variables d'environnement")
-        return
     payload = {
         "date": date,
         "zone": zone,
         "area": area,
         "anomaly": anomaly
     }
+    print("[DEBUG] Webhook utilisé :", url)
+    print("[DEBUG] Payload envoyé à Google Sheets :", payload)
+    if not url:
+        print("❌ GOOGLE_SHEETS_WEBHOOK non défini dans les variables d'environnement")
+        return
     try:
         r = requests.post(url, json=payload, timeout=10)
+        print("[DEBUG] Status code Google Sheets :", r.status_code)
+        print("[DEBUG] Réponse Google Sheets :", r.text)
         r.raise_for_status()
         print("✅ Donnée envoyée à Google Sheets")
     except Exception as e:
@@ -173,6 +177,7 @@ def check_brine_change(force_alert=False):
         hist = load_history(p["name"])
         anomaly = compute_anomaly(hist, area)
         append_record(date_iso, p["name"], area, anomaly)
+        print("[DEBUG] Appel send_to_google_sheets avec :", date_iso, p["name"], area, anomaly)
         send_to_google_sheets(date_iso, p["name"], area, anomaly)
 
         # 🚨 Alerte individuelle

@@ -16,9 +16,9 @@ from telegram import send_telegram_message
 
 app = Flask(__name__)
 
-CLIENT_ID = os.environ.get("SENTINELHUB_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("SENTINELHUB_CLIENT_SECRET")
-WEBHOOK_SHEET = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
+CLIENT_ID    = os.environ.get("SENTINELHUB_CLIENT_ID")
+CLIENT_SECRET= os.environ.get("SENTINELHUB_CLIENT_SECRET")
+WEBHOOK_SHEET= os.environ.get("GOOGLE_SHEETS_WEBHOOK")
 HISTORY_FILE = "ndvi_history.csv"
 REPORT_IMAGE = "report.png"
 
@@ -66,11 +66,12 @@ def get_access_token():
     return response.json().get("access_token")
 
 def get_ndvi(lat, lon, date, token):
+    # Simulation : remplace par ta vraie extraction Sentinel Hub
     return round(np.random.uniform(0.2, 0.85), 2)
 
 def send_to_google_sheets(entry):
     try:
-        requests.post(WEBHOOK_SHEET, json=entry)
+        requests.post(WEBHOOK_SHEET, json=entry, timeout=5)
     except Exception as e:
         print(f"❌ Erreur Google Sheets : {e}")
 
@@ -108,66 +109,62 @@ def generate_daily_report(data):
 
 def check_ndvi_drop(force_alert=False):
     today = datetime.utcnow().date()
-    doy = today.timetuple().tm_yday
+    doy   = today.timetuple().tm_yday
     if doy < 120 or doy > 260:
         print(f"⏸️ Période hors pousse (DOY {doy}).")
         return
 
-    token = get_access_token()
-    yesterday = today - timedelta(days=1)
+    token    = get_access_token()
     week_ago = today - timedelta(days=7)
-    weighted_index = 0
-    total_weight = 0
+    weighted_index = total_weight = 0
     investment_signals = []
     report_data = []
 
     for c in counties:
-        lat, lon = c["lat"], c["lon"]
-        ndvi_today = get_ndvi(lat, lon, today.isoformat(), token)
-        ndvi_week = get_ndvi(lat, lon, week_ago.isoformat(), token)
-
-        if not all([ndvi_today, ndvi_week]):
+        ndvi_today = get_ndvi(c["lat"], c["lon"], today.isoformat(), token)
+        ndvi_week  = get_ndvi(c["lat"], c["lon"], week_ago.isoformat(), token)
+        if ndvi_today is None or ndvi_week is None:
             continue
 
         delta_7d = ndvi_today - ndvi_week
         z = (ndvi_today - 0.6) / 0.15
-        percentile = int(np.clip(100 * (1 + z) / 2, 0, 100))
+        pct = int(np.clip(100 * (1 + z) / 2, 0, 100))
         stage, threshold = determine_stage(today)
         weighted_index += z * c["weight"]
-        total_weight += c["weight"]
+        total_weight   += c["weight"]
 
         alert = ndvi_today < threshold and (z <= -1.5 or delta_7d < -0.1)
         if alert or force_alert:
-            msg = f"{'⚠️ FAKE ALERT TEST' if force_alert else '🚨 Alerte NDVI à ' + c['name']} 🚨\n"
-            msg += f"{c['tier']} | Stade : {stage} (seuil : {threshold})\n"
-            msg += f"📉 NDVI actuel : {ndvi_today} → {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
-            msg += f"↘️ Variation sur 7j : {delta_7d:.2f}\n"
-            msg += f"📊 Z-score : {z:.2f}\n"
-            msg += f"📈 Percentile : {percentile}%\n"
-            msg += f"💡 Reco : {'📉 Possible baisse du prix → Attendre' if z < -2 else '📈 Stress modéré → Surveiller mais pas d’action immédiate'}"
+            msg = (
+                f"{'⚠️ FAKE ALERT TEST' if force_alert else '🚨 Alerte NDVI à ' + c['name']} 🚨\n"
+                f"{c['tier']} | Stade : {stage} (seuil : {threshold})\n"
+                f"📉 NDVI actuel : {ndvi_today} → {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
+                f"↘️ Variation sur 7j : {delta_7d:+.2f}\n"
+                f"📊 Z-score : {z:+.2f}\n"
+                f"📈 Percentile : {pct}%\n"
+                f"💡 Reco : {'📉 Baisse possible → Attendre' if z < -2 else '📈 Stress modéré → Surveiller'}"
+            )
             send_telegram_message(msg)
             investment_signals.append(z)
 
-        entry = [today.isoformat(), c["name"], ndvi_today, round(delta_7d, 2), round(z, 2), percentile, stage, threshold, c["tier"]]
+        entry = [
+            today.isoformat(), c["name"], ndvi_today, round(delta_7d, 2),
+            round(z, 2), pct, stage, threshold, c["tier"]
+        ]
         write_to_csv(entry)
+        send_to_google_sheets({
+            "county": c["name"], "ndvi": ndvi_today, "delta_7d": round(delta_7d, 2),
+            "z": round(z, 2), "percentile": pct, "stage": stage,
+            "threshold": threshold, "tier": c["tier"]
+        })
+        report_data.append({
+            "county": c["name"], "ndvi": ndvi_today, "threshold": threshold
+        })
 
-        payload = {
-            "county": c["name"],
-            "ndvi": ndvi_today,
-            "delta_7d": round(delta_7d, 2),
-            "z": round(z, 2),
-            "percentile": percentile,
-            "stage": stage,
-            "threshold": threshold,
-            "tier": c["tier"]
-        }
-        send_to_google_sheets(payload)
-        report_data.append(payload)
-
-    stress_index = weighted_index / total_weight if total_weight else 0
+    stress_index = (weighted_index / total_weight) if total_weight else 0
     summary = f"🌽 Corn-Belt Stress Index : {stress_index:.2f}"
     if len(investment_signals) >= 5 and stress_index < -0.5:
-        summary += "\n📈 Signal d'opportunité potentielle pour investir (stress agrégé élevé)"
+        summary += "\n📈 Signal d’opportunité potentielle (stress agrégé élevé)"
     send_telegram_message(summary)
 
     path = generate_daily_report(report_data)
@@ -180,50 +177,44 @@ def home():
 @app.route("/test")
 def test():
     result = send_telegram_message("✅ TEST – NDVI Bot opérationnel ✅")
-    if result:
-        return jsonify({"status": "ok", "message": "Message Telegram de test envoyé avec succès.", "telegram_result": True})
-    else:
-        return jsonify({"status": "error", "message": "Échec de l'envoi du message Telegram.", "telegram_result": False}), 500
+    return jsonify({
+        "status": "ok" if result else "error",
+        "message": "Message Telegram de test envoyé." if result else "Échec envoi."
+    }), (200 if result else 500)
 
 @app.route("/debug")
 def debug():
-    token = os.environ.get("TELEGRAM_TOKEN")
+    token   = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    debug_info = {
+    info = {
         "token_present": bool(token),
         "chat_id_present": bool(chat_id),
-        "chat_id_value": chat_id,
-        "token_preview": f"{token[:10]}...{token[-4:]}" if token else "Non défini"
+        "token_preview": token[:10] + "…" if token else None
     }
     if token and chat_id:
         try:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {"chat_id": str(chat_id), "text": f"🔍 Test diagnostic - {datetime.utcnow().strftime('%H:%M:%S')} UTC"}
-            response = requests.post(url, json=payload, timeout=10)
-            debug_info["api_status"] = response.status_code
-            debug_info["api_response"] = response.text
-            if response.status_code == 200:
-                result = response.json()
-                debug_info["api_success"] = result.get("ok", False)
-                debug_info["api_error"] = result.get("error_code") if not result.get("ok") else None
-            else:
-                debug_info["api_success"] = False
-                debug_info["api_error"] = f"HTTP {response.status_code}"
+            resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🔍 Test diag NDVI"}
+            )
+            info.update({"api_status": resp.status_code, "api_ok": resp.json().get("ok")})
         except Exception as e:
-            debug_info["api_error"] = str(e)
-            debug_info["api_success"] = False
-    return jsonify(debug_info)
+            info["error"] = str(e)
+    return jsonify(info)
 
 @app.route("/force")
 def force():
     debug = request.args.get("debug", "false").lower() == "true"
     check_ndvi_drop(force_alert=debug)
-    return jsonify({"status": "ok", "message": f"Analyse NDVI {'(debug)' if debug else ''} lancée avec succès."})
+    return jsonify({"status": "ok", "debug": debug})
 
 @app.route("/export")
 def export():
     return send_file(HISTORY_FILE, as_attachment=True)
 
 if __name__ == "__main__":
+    # Exécution initiale
     check_ndvi_drop()
-    app.run(host="0.0.0.0", port=10000)
+    # Démarrage sur le port fourni par Render (variable d'env PORT)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

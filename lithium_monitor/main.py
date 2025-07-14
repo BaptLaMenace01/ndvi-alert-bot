@@ -188,6 +188,16 @@ def force():
 def export_csv():
     return send_file(HISTORY_FILE, as_attachment=True)
 
+@app.route("/debug")
+def debug():
+    ok = send_telegram_message("🔍 Test diagnostic Lithium – si tu vois ce message, la connexion Telegram fonctionne !")
+    return jsonify({"telegram_ok": ok})
+
+@app.route("/test")
+def test():
+    ok = send_telegram_message("✅ Test manuel Lithium – ce message confirme que l’alerte fonctionne !")
+    return jsonify({"telegram_ok": ok})
+
 if __name__ == "__main__":
     check_brine_change()
     app.run(host="0.0.0.0", port=10000)

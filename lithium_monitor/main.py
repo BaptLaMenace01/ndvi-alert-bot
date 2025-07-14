@@ -21,6 +21,7 @@ import requests
 import numpy as np
 import matplotlib.pyplot as plt
 from flask import Flask, jsonify, send_file
+from telegram import send_telegram_message
 
 # 🔐 Identifiants (à définir dans ton env Replit)
 CLIENT_ID = os.getenv("SENTINELHUB_CLIENT_ID")
@@ -141,11 +142,6 @@ def compute_anomaly(history, current):
     return round((current - mean) / mean * 100, 2)
 
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-
-
 def check_brine_change():
     date_iso = datetime.utcnow().date().isoformat()
     token = get_access_token()
@@ -167,13 +163,13 @@ def check_brine_change():
                 f"Surface eau/saumure : {area/1e4:.1f} ha (Δ {anomaly:+.1f} %)\n"
                 f"Poids : {p['weight']*100:.0f} %"
             )
-            send_telegram(msg)
+            send_telegram_message(msg)
             global_signal += p["weight"] * (1 if anomaly >= THRESHOLD_PCT else -1)
 
     # 🚩 Alerte globale
     if abs(global_signal) >= 0.3:
         trend = "SURproduction (signal short)" if global_signal > 0 else "Stress hydrique (signal long)"
-        send_telegram(f"🚨 Signal global Lithium : {trend} – Score {global_signal:+.2f}")
+        send_telegram_message(f"🚨 Signal global Lithium : {trend} – Score {global_signal:+.2f}")
 
 # ---------------------------------------------------------------------
 # Routes Flask pour cron + export

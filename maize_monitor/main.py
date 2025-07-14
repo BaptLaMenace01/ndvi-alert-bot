@@ -233,8 +233,12 @@ def home():
 @app.route("/force")
 def force():
     debug = request.args.get("debug","false").lower()=="true"
-    check_ndvi_drop(force_alert=debug)
-    return jsonify({"status":"ok","debug":debug})
+    try:
+        check_ndvi_drop(force_alert=debug)
+        return jsonify({"status":"ok","debug":debug})
+    except Exception as e:
+        logger.error(f"Erreur dans /force : {e}")
+        return jsonify({"status":"error"}), 500
 
 @app.route("/debug")
 def debug():

@@ -255,7 +255,13 @@ def debug():
 
 @app.route("/export")
 def export():
+    if not os.path.isfile(HISTORY_FILE):
+        return "Aucun historique NDVI à exporter.", 404
     return send_file(HISTORY_FILE, as_attachment=True)
+
+@app.route("/test")
+def test():
+    return "Test OK !"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Démarrage du service

@@ -142,6 +142,22 @@ def compute_anomaly(history, current):
     return round((current - mean) / mean * 100, 2)
 
 
+def send_to_google_sheets(date, zone, area, anomaly):
+    url = "https://script.google.com/macros/s/AKfycbzB5Ecr419veLqx6Oab1emKz1JKKA-Kk9qGu0NsOBMUcZBs6_vBopK9WQWJmFceh0GY/exec"
+    payload = {
+        "date": date,
+        "zone": zone,
+        "area": area,
+        "anomaly": anomaly
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        r.raise_for_status()
+        print("✅ Donnée envoyée à Google Sheets")
+    except Exception as e:
+        print(f"❌ Erreur Google Sheets : {e}")
+
+
 def check_brine_change():
     date_iso = datetime.utcnow().date().isoformat()
     token = get_access_token()
@@ -154,6 +170,7 @@ def check_brine_change():
         hist = load_history(p["name"])
         anomaly = compute_anomaly(hist, area)
         append_record(date_iso, p["name"], area, anomaly)
+        send_to_google_sheets(date_iso, p["name"], area, anomaly)
 
         # 🚨 Alerte individuelle
         if anomaly >= THRESHOLD_PCT or anomaly <= THRESHOLD_NEG:

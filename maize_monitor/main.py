@@ -261,7 +261,8 @@ def export():
 
 @app.route("/test")
 def test():
-    return "Test OK !"
+    send_telegram_message("🔔 Test Telegram depuis /test !")
+    return "Test OK ! (Message Telegram envoyé)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Démarrage du service

@@ -3,7 +3,7 @@
 NDVI Monitoring & Alert System – Version 3.2 (July 2025)
 ========================================================
 Live Sentinel NDVI Data + Telegram Alerts + Google Sheets Logging + Investment Suggestion Summary
-+ Manual Trigger via /force URL (+ debug test alerts) + Exportable CSV history
++ Manual Trigger via /force URL (+ debug test alerts) + Exportable CSV history + Visual Report
 """
 import os
 import requests
@@ -20,6 +20,7 @@ CLIENT_ID = os.environ.get("SENTINELHUB_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("SENTINELHUB_CLIENT_SECRET")
 WEBHOOK_SHEET = os.environ.get("GOOGLE_SHEETS_WEBHOOK")
 HISTORY_FILE = "ndvi_history.csv"
+REPORT_IMAGE = "report.png"
 
 # 📍 Top 20 corn-producing counties with weights
 counties = [
@@ -91,6 +92,20 @@ def determine_stage(date):
     else:
         return "pre-silking", 0.7
 
+def generate_daily_report(data):
+    fig, ax = plt.subplots(figsize=(12, 6))
+    names = [d["county"] for d in data]
+    ndvi = [d["ndvi"] for d in data]
+    colors = ["green" if v > d["threshold"] else "red" for v, d in zip(ndvi, data)]
+    ax.bar(names, ndvi, color=colors)
+    ax.set_title(f"NDVI Report - {datetime.utcnow().date()} (Red = sous seuil)")
+    ax.set_ylabel("NDVI")
+    ax.tick_params(axis='x', rotation=90)
+    plt.tight_layout()
+    plt.savefig(REPORT_IMAGE)
+    plt.close()
+    return REPORT_IMAGE
+
 def check_ndvi_drop(force_alert=False):
     today = datetime.utcnow().date()
     doy = today.timetuple().tm_yday
@@ -104,14 +119,14 @@ def check_ndvi_drop(force_alert=False):
     weighted_index = 0
     total_weight = 0
     investment_signals = []
+    report_data = []
 
     for c in counties:
         lat, lon = c["lat"], c["lon"]
         ndvi_today = get_ndvi(lat, lon, today.isoformat(), token)
-        ndvi_yesterday = get_ndvi(lat, lon, yesterday.isoformat(), token)
         ndvi_week = get_ndvi(lat, lon, week_ago.isoformat(), token)
 
-        if not all([ndvi_today, ndvi_yesterday, ndvi_week]):
+        if not all([ndvi_today, ndvi_week]):
             continue
 
         delta_7d = ndvi_today - ndvi_week
@@ -126,16 +141,17 @@ def check_ndvi_drop(force_alert=False):
             msg = f"{'⚠️ FAKE ALERT TEST' if force_alert else '🚨 Alerte NDVI à ' + c['name']} 🚨\n"
             msg += f"{c['tier']} | Stade : {stage} (seuil : {threshold})\n"
             msg += f"📉 NDVI actuel : {ndvi_today} → {'SOUS seuil' if ndvi_today < threshold else 'OK'}\n"
-            msg += f"↘️ Variation sur 7j : {delta_7d:.2f} → {'Chute rapide' if delta_7d < -0.1 else 'Normale'}\n"
-            msg += f"📊 Z-score : {z:.2f} → {'Stress sévère' if z <= -2 else 'Stress modéré' if z <= -1.5 else 'Stable'}\n"
-            msg += f"📈 Percentile : {percentile}%"
+            msg += f"↘️ Variation sur 7j : {delta_7d:.2f}\n"
+            msg += f"📊 Z-score : {z:.2f}\n"
+            msg += f"📈 Percentile : {percentile}%\n"
+            msg += f"💡 Reco : {'📉 Possible baisse du prix → Attendre' if z < -2 else '📈 Stress modéré → Surveiller mais pas d’action immédiate'}"
             send_telegram_message(msg)
             investment_signals.append(z)
 
         entry = [today.isoformat(), c["name"], ndvi_today, round(delta_7d, 2), round(z, 2), percentile, stage, threshold, c["tier"]]
         write_to_csv(entry)
 
-        send_to_google_sheets({
+        payload = {
             "county": c["name"],
             "ndvi": ndvi_today,
             "delta_7d": round(delta_7d, 2),
@@ -144,7 +160,9 @@ def check_ndvi_drop(force_alert=False):
             "stage": stage,
             "threshold": threshold,
             "tier": c["tier"]
-        })
+        }
+        send_to_google_sheets(payload)
+        report_data.append(payload)
 
     stress_index = weighted_index / total_weight if total_weight else 0
     summary = f"🌽 Corn-Belt Stress Index : {stress_index:.2f}"
@@ -152,54 +170,38 @@ def check_ndvi_drop(force_alert=False):
         summary += "\n📈 Signal d'opportunité potentielle pour investir (stress agrégé élevé)"
     send_telegram_message(summary)
 
+    path = generate_daily_report(report_data)
+    send_telegram_message("🖼️ Rapport visuel du jour", image_path=path)
+
 @app.route("/")
 def home():
     return "✅ NDVI Alert Bot (v3.2)"
 
 @app.route("/test")
 def test():
-    # Test avec diagnostic détaillé
     result = send_telegram_message("✅ TEST – NDVI Bot opérationnel ✅")
-    
     if result:
-        return jsonify({
-            "status": "ok", 
-            "message": "Message Telegram de test envoyé avec succès.",
-            "telegram_result": True
-        })
+        return jsonify({"status": "ok", "message": "Message Telegram de test envoyé avec succès.", "telegram_result": True})
     else:
-        return jsonify({
-            "status": "error", 
-            "message": "Échec de l'envoi du message Telegram.",
-            "telegram_result": False
-        }), 500
+        return jsonify({"status": "error", "message": "Échec de l'envoi du message Telegram.", "telegram_result": False}), 500
 
 @app.route("/debug")
 def debug():
-    """Endpoint de diagnostic détaillé"""
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
     debug_info = {
         "token_present": bool(token),
         "chat_id_present": bool(chat_id),
         "chat_id_value": chat_id,
         "token_preview": f"{token[:10]}...{token[-4:]}" if token else "Non défini"
     }
-    
-    # Test direct de l'API Telegram
     if token and chat_id:
         try:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {
-                "chat_id": str(chat_id),
-                "text": f"🔍 Test diagnostic - {datetime.utcnow().strftime('%H:%M:%S')} UTC"
-            }
-            
+            payload = {"chat_id": str(chat_id), "text": f"🔍 Test diagnostic - {datetime.utcnow().strftime('%H:%M:%S')} UTC"}
             response = requests.post(url, json=payload, timeout=10)
             debug_info["api_status"] = response.status_code
             debug_info["api_response"] = response.text
-            
             if response.status_code == 200:
                 result = response.json()
                 debug_info["api_success"] = result.get("ok", False)
@@ -207,11 +209,9 @@ def debug():
             else:
                 debug_info["api_success"] = False
                 debug_info["api_error"] = f"HTTP {response.status_code}"
-                
         except Exception as e:
             debug_info["api_error"] = str(e)
             debug_info["api_success"] = False
-    
     return jsonify(debug_info)
 
 @app.route("/force")
@@ -225,4 +225,5 @@ def export():
     return send_file(HISTORY_FILE, as_attachment=True)
 
 if __name__ == "__main__":
+    check_ndvi_drop()
     app.run(host="0.0.0.0", port=10000)

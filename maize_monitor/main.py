@@ -115,8 +115,55 @@ def get_access_token():
     return resp.json().get("access_token")
 
 def get_ndvi(lat, lon, date, token):
-    # TODO: remplacer par vraie requête Sentinel Hub
-    return round(np.random.uniform(0.2, 0.85), 2)
+    """
+    Retourne le NDVI Sentinel-2 réel pour (lat, lon) à la date donnée,
+    en excluant les pixels nuageux (SCL 7-10) et avec CLP < 30 %.
+    """
+    try:
+        from sentinelhub import (
+            SHConfig, SentinelHubRequest, DataCollection,
+            bbox_to_dimensions, BBox
+        )
+
+        cfg = SHConfig()
+        cfg.sh_client_id     = os.getenv("SENTINELHUB_CLIENT_ID")
+        cfg.sh_client_secret = os.getenv("SENTINELHUB_CLIENT_SECRET")
+
+        # petit carré ~1 km autour du point
+        bbox = BBox([lon-0.005, lat-0.005, lon+0.005, lat+0.005], crs="EPSG:4326")
+        size = bbox_to_dimensions(bbox, resolution=20)
+
+        evalscript = """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B04","B08","SCL","dataMask","CLP"],
+            output:{ bands:2, sampleType:"FLOAT32" }
+          };
+        }
+        function evaluatePixel(s) {
+          if ([7,8,9,10].includes(s.SCL) || s.CLP >= 30) return [0,0];
+          var ndvi = index(s.B08, s.B04);
+          return [ndvi, s.dataMask];
+        }
+        """
+        request = SentinelHubRequest(
+            evalscript=evalscript,
+            input_data=[SentinelHubRequest.input_data(
+                data_collection=DataCollection.SENTINEL2_L2A,
+                time_interval=(date, date)
+            )],
+            responses=[SentinelHubRequest.output_response("default", mime_type="application/json")],
+            bbox=bbox,
+            size=size,
+            config=cfg
+        )
+        data = request.get_data()[0]["data"]
+        vals = [px[0] for px in data if px[1] == 1]  # dataMask == 1
+        return round(float(np.mean(vals)), 3) if vals else None
+    except Exception as e:
+        logger.error(f"SentinelHub NDVI error: {e}")
+        return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV & Google Sheets
